@@ -61,7 +61,31 @@ class User(Base):
     profile_picture = Column(Text, nullable=True)
 
     orders = relationship("Order", back_populates="user")
+    cart_items = relationship("CartItem", back_populates="user")
+    wishlist_items = relationship("WishlistItem", back_populates="user")
 
+
+class CartItem(Base):
+    __tablename__ = "cart_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    quantity = Column(Integer, default=1, nullable=False)
+
+    user = relationship("User", back_populates="cart_items")
+    product = relationship("Product")
+
+
+class WishlistItem(Base):
+    __tablename__ = "wishlist_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+
+    user = relationship("User", back_populates="wishlist_items")
+    product = relationship("Product")
 
 
 class Order(Base):

@@ -1,14 +1,70 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from app.db import SessionLocal, get_db
+from sqlalchemy.orm import Session, joinedload
+from app.db import get_db
 from app.utils.security import get_current_user
-from app.models import User, Order, Product, OrderItem
+from app.models import User, Order, Product, OrderItem, Shop
+from app.schemas.product import ProductResponse
 import app.crud as crud
 
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
+api_router = APIRouter(prefix="/api/orders", tags=["Orders"])
 
 
+def _serialize_order(db: Session, order: Order) -> dict:
+    items_out = []
+    for item in order.items:
+        product = db.query(Product).filter(Product.id == item.product_id).first()
+        product_data = None
+        if product:
+            shop_name = db.query(Shop.name).filter(Shop.id == product.shop_id).scalar()
+            pdata = ProductResponse.model_validate(product).model_dump()
+            pdata["shop_name"] = shop_name
+            product_data = pdata
+        items_out.append(
+            {
+                "id": item.id,
+                "product_id": item.product_id,
+                "quantity": item.quantity,
+                "price": product.price if product else 0,
+                "product": product_data,
+            }
+        )
+    return {
+        "id": order.id,
+        "status": order.status,
+        "total": order.total_price,
+        "total_price": order.total_price,
+        "created_at": None,
+        "items": items_out,
+    }
+
+
+def _list_my_orders(db: Session, current_user: User):
+    orders = (
+        db.query(Order)
+        .options(joinedload(Order.items))
+        .filter(Order.user_id == current_user.id)
+        .order_by(Order.id.desc())
+        .all()
+    )
+    return [_serialize_order(db, o) for o in orders]
+
+
+@router.get("/")
+def list_orders(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _list_my_orders(db, current_user)
+
+
+@api_router.get("/")
+def api_list_orders(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _list_my_orders(db, current_user)
 
 
 @router.post("/")
@@ -23,7 +79,19 @@ def create_order(
             detail="Only buyers can create orders"
         )
 
-    return crud.create_order(db, current_user.id)
+    order = crud.create_order(db, current_user.id)
+    return _serialize_order(db, order)
+
+
+@api_router.post("/")
+def api_create_order(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "buyer":
+        raise HTTPException(status_code=403, detail="Only buyers can create orders")
+    order = crud.create_order(db, current_user.id)
+    return _serialize_order(db, order)
 
 
 @router.post("/{order_id}/add")

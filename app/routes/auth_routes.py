@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import User
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse
-from app.utils.security import verify_password, create_access_token, hash_password
+from app.utils.security import verify_password, create_access_token, hash_password, get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -43,3 +43,13 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
         "access_token": access_token,
         "token_type": "bearer"
     }
+
+
+@router.put("/upgrade-to-seller")
+def upgrade_to_seller(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    current_user.role = "seller"
+    db.commit()
+    return {"message": "Upgraded to seller successfully", "role": "seller"}
