@@ -22,10 +22,17 @@ def create_product(product: ProductCreate, db: Session = Depends(get_db),  curre
             status_code=403,
             detail="Only sellers can create products"
         )
-    
+
     # `shop_name` is response-only; ignore any unexpected fields defensively.
     payload = product.model_dump()
     payload.pop("shop_name", None)
+
+    shop = db.query(Shop).filter(Shop.id == payload["shop_id"]).first()
+    if not shop:
+        raise HTTPException(status_code=404, detail="Shop not found")
+    if shop.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You can only add products to your own shop")
+
     new_product = Product(**payload, seller_id=current_user.id)
     db.add(new_product)
     db.commit()

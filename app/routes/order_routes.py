@@ -94,6 +94,44 @@ def api_create_order(
     return _serialize_order(db, order)
 
 
+def _cancel_order(db: Session, order_id: int, current_user: User) -> dict:
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You are not allowed to cancel this order")
+    status = (order.status or "pending").lower()
+    if status == "cancelled":
+        return _serialize_order(db, order)
+    if status not in ("pending", "processing"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot cancel order with status '{order.status}'",
+        )
+    order.status = "cancelled"
+    db.commit()
+    db.refresh(order)
+    return _serialize_order(db, order)
+
+
+@router.post("/{order_id}/cancel")
+def cancel_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _cancel_order(db, order_id, current_user)
+
+
+@api_router.post("/{order_id}/cancel")
+def api_cancel_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _cancel_order(db, order_id, current_user)
+
+
 @router.post("/{order_id}/add")
 def add_product(
     order_id: int, 
