@@ -1,478 +1,437 @@
 #!/usr/bin/env python3
 """
-Seed Bomnous with 4 seller shops and a full catalog of products (categories, aesthetics, tags).
+seed_bomnous.py — Bomnous Graduation Project (Near East University 2026)
 
-Run from backend root with DATABASE_URL set (e.g. in .env):
-  cd bomnous-backend && python seed_bomnous.py
+Seeds 17 real North Cyprus shops + seller accounts + 85 products.
+Uses the same SQLAlchemy models as the FastAPI backend (integer IDs, hashed_password, etc.).
 
-Skips if products already exist. To re-seed, delete products (and dependent rows) first
-or use a fresh database.
+Usage (from bomnous-grad-backend/):
+    export DATABASE_URL=postgresql://...   # or set in .env
+    python seed_bomnous.py
+    python seed_bomnous.py --force         # add missing rows even if partially seeded
+
+All seller logins: email from SHOPS below, password Bomnous2026!
 """
 from __future__ import annotations
 
+import argparse
+import json
 import os
+import re
 import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
+from passlib.context import CryptContext  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.db import SessionLocal  # noqa: E402
 from app.models import Product, Shop, User  # noqa: E402
-from app.utils.security import hash_password  # noqa: E402
 
-# Remote fashion photography (Unsplash / Pexels) — main + hover
-_GOOD = [
-    "https://images.unsplash.com/photo-1539533018447-63fcce2678e3?w=900&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1441986300917-64664a580a2c?w=900&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1490481651871-ab68de25d43d?w=900&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1509631179647-0177331693ae?w=900&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=900&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1515886657613-9f3515b0c78a?w=900&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1552374196-1ab2a1c593e8?w=900&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1617137968427-85924c2a5504?w=900&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1434389677669-e08b4cac3105?w=900&auto=format&fit=crop",
-    "https://images.pexels.com/photos/985285/pexels-photo-985285.jpeg?w=900",
-    "https://images.unsplash.com/photo-1591047139829-d91aecb6c2e4?w=900&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=900&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1560769629-975b94a02729?w=900&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1582555172866-f73bb12a2ab3?w=900&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1503341455253-b2b723a3d2a1?w=900&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1601925260368-8822a6e5c6d6?w=900&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1583743814966-8936f0d5e4d5?w=900&auto=format&fit=crop",
-    "https://images.pexels.com/photos/6311666/pexels-photo-6311666.jpeg?w=900",
-    "https://images.pexels.com/photos/1926769/pexels-photo-1926769.jpeg?w=900&h=1200&fit=crop",
+SELLER_PASSWORD = "Bomnous2026!"
+_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def hash_password(password: str) -> str:
+    """Same algorithm as app.utils.security — avoids needing JWT env vars for seed."""
+    return _pwd_context.hash(password[:72])
+MARKER_SHOP = "Garderobe"
+
+TAGS = ("trending", "just-dropped", "editors-picks")
+AESTHETIC_BY_CATEGORY = {
+    "women": "soft-luxury",
+    "men": "smart-casual",
+    "baby": "everyday",
+}
+
+# ── Shop + seller definitions ─────────────────────────────────────────────────
+
+SHOPS = [
+    {
+        "name": "Garderobe",
+        "city": "Lefkoşa",
+        "address": "Şht. Aziz Güner Sk, Ortaköy, Lefkoşa",
+        "phone": "+90 392 228 83 66",
+        "category": "women",
+        "instagram": None,
+        "description": "Elegant evening dresses, jewellery and accessories in the heart of Ortaköy. Known for stunning gowns and a warm personal service — the owner even hand-delivers orders.",
+        "email": "garderobe.lefkosa@bomnous.com",
+    },
+    {
+        "name": "Stylish Boutique",
+        "city": "Lefkoşa",
+        "address": "Şehit Kemal Ünal Caddesi, Kızılay, Lefkoşa",
+        "phone": "+90 533 868 69 35",
+        "category": "women",
+        "instagram": None,
+        "description": "Curated women's fashion in central Lefkoşa. Seasonal collections, everyday wear and special-occasion pieces at accessible prices.",
+        "email": "stylish.lefkosa@bomnous.com",
+    },
+    {
+        "name": "Nera Boutique",
+        "city": "Girne",
+        "address": "Canbulat Sk, Girne",
+        "phone": "+90 533 822 82 28",
+        "category": "women",
+        "instagram": None,
+        "description": "Girne's most-loved boutique. Genuine leather bags, sunglasses, jewellery and accessories. Open every day — a must-visit on the harbour strip.",
+        "email": "nera.girne@bomnous.com",
+    },
+    {
+        "name": "NOVITA Girne",
+        "city": "Girne",
+        "address": "Nelly Court, Semih Sancar Caddesi No:6, Girne",
+        "phone": "+90 533 838 96 08",
+        "category": "women",
+        "instagram": "novitafashion.shop",
+        "description": "Contemporary women's fashion with its own online shop. Seasonal drops, modern silhouettes and trend-forward pieces for the Girne woman.",
+        "email": "novita.girne@bomnous.com",
+    },
+    {
+        "name": "LUNA Fashion",
+        "city": "Gazimağusa",
+        "address": "İsmet İnönü Blvd, Gazimağusa",
+        "phone": "+90 533 831 17 77",
+        "category": "women",
+        "instagram": None,
+        "description": "Popular women's fashion store on Famagusta's main boulevard. Ships island-wide — orders from Nicosia arrive faster than local shops. Clothes match the photos, always.",
+        "email": "luna.magusa@bomnous.com",
+    },
+    {
+        "name": "Purple Rain Famagusta",
+        "city": "Gazimağusa",
+        "address": "Şafak Plaza, Cahit Sıtkı Tarancı Sokak No:1, Gazimağusa",
+        "phone": "+90 392 365 20 05",
+        "category": "women",
+        "instagram": None,
+        "description": "Boutique evening gowns in a wide spectrum of colours. Welcoming to everyone regardless of size or background. Customisation available. English-speaking owner.",
+        "email": "purplerain.magusa@bomnous.com",
+    },
+    {
+        "name": "Aysan Butik",
+        "city": "Güzelyurt",
+        "address": "Erol Reşat Sk 2/B, Güzelyurt",
+        "phone": "+90 392 714 23 81",
+        "category": "women",
+        "instagram": None,
+        "description": "A charming discovery in Güzelyurt's town centre. Quality women's clothing at fair prices — a hidden gem in North Cyprus's citrus capital.",
+        "email": "aysan.guzelyurt@bomnous.com",
+    },
+    {
+        "name": "Baddie Butik",
+        "city": "Güzelyurt",
+        "address": "Ecevit Caddesi 38, Güzelyurt",
+        "phone": "+90 533 882 06 19",
+        "category": "women",
+        "instagram": "baddiebutik.com",
+        "description": "Trendy women's clothing and shoes with its own website. Loyal local following, new arrivals weekly. Open 7 days a week.",
+        "email": "baddie.guzelyurt@bomnous.com",
+    },
+    {
+        "name": "Rengarenk",
+        "city": "İskele",
+        "address": "Şehit İlker Kartel Caddesi, Sayılı İş Merkezi, İskele",
+        "phone": "+90 392 371 23 39",
+        "category": "women",
+        "instagram": None,
+        "description": "İskele's most-reviewed clothing store. Wide selection of women's and children's wear, accessories, pyjamas and homewear. Friendly staff, affordable prices.",
+        "email": "rengarenk.iskele@bomnous.com",
+    },
+    {
+        "name": "L'uomo Menswear",
+        "city": "Lefkoşa",
+        "address": "Αρχιεπισκόπου Μακαρίου Γ' 2, Lefkoşa",
+        "phone": "+357 22 676520",
+        "category": "men",
+        "instagram": "luomo_menswear",
+        "description": "The go-to men's suit destination in Nicosia. Excellent quality suits, shirts, ties and accessories at very fair prices. Fast alterations available in-store.",
+        "email": "luomo.lefkosa@bomnous.com",
+    },
+    {
+        "name": "Baron's Sillage",
+        "city": "Lefkoşa",
+        "address": "Belediye Blvd, Dereli Ömer Apt No:5B, Gönyeli, Lefkoşa",
+        "phone": "+90 548 855 98 32",
+        "category": "men",
+        "instagram": None,
+        "description": "North Cyprus's most-reviewed menswear boutique. Carefully selected suits, shirts and streetwear. Staff give honest styling advice — they listen before they sell.",
+        "email": "barons.lefkosa@bomnous.com",
+    },
+    {
+        "name": "Adamax Girne",
+        "city": "Girne",
+        "address": "Mete Adanır Caddesi 1, Girne",
+        "phone": "+90 533 876 86 68",
+        "category": "men",
+        "instagram": None,
+        "description": "Girne's quality address for men's and women's fashion. Spacious store, great variety of trendy and classic pieces. Open late — until 8 PM daily.",
+        "email": "adamax.girne@bomnous.com",
+    },
+    {
+        "name": "Moustache Butik",
+        "city": "Gazimağusa",
+        "address": "İsmet İnönü Blvd, Gazimağusa",
+        "phone": "+90 533 848 73 93",
+        "category": "men",
+        "instagram": "moustachemenwear",
+        "description": "Famagusta's dedicated men's fashion destination. High-quality durable jeans, Stone Island, snapbacks and branded items. Staff have great fashion sense.",
+        "email": "moustache.magusa@bomnous.com",
+    },
+    {
+        "name": "Men & Men",
+        "city": "Gazimağusa",
+        "address": "İstiklal Caddesi, Gazimağusa",
+        "phone": "+90 548 860 10 04",
+        "category": "men",
+        "instagram": None,
+        "description": "Top-notch men's suits and formal wear. Owner is a 'complete gentleman' according to regulars. Opens early at 8 AM — ideal before lectures.",
+        "email": "menandmen.magusa@bomnous.com",
+    },
+    {
+        "name": "Babyli Bebek",
+        "city": "Lefkoşa",
+        "address": "Metropol yolu üzeri (Vakıflar Bankası yanı), Lefkoşa",
+        "phone": "+90 533 831 22 29",
+        "category": "baby",
+        "instagram": None,
+        "description": "Baby and children's clothing and accessories store in central Lefkoşa. Open 7 days, early hours. Everything a new parent needs under one roof.",
+        "email": "babyli.lefkosa@bomnous.com",
+    },
+    {
+        "name": "Mamatoto Nicosia",
+        "city": "Lefkoşa",
+        "address": "Andrea Michalakopoulou 15, Lefkoşa",
+        "phone": "+357 22 761159",
+        "category": "baby",
+        "instagram": None,
+        "description": "Comprehensive baby store with a wide range of clothing, gear and nursery products. Ships island-wide. Recommended by expecting parents across Cyprus.",
+        "email": "mamatoto.lefkosa@bomnous.com",
+    },
+    {
+        "name": "Mio Doro Kids",
+        "city": "Girne",
+        "address": "Semih Sancar Caddesi, Girne",
+        "phone": "+90 548 861 19 65",
+        "category": "baby",
+        "instagram": None,
+        "description": "Beautiful organic cotton baby and children's clothing in Girne. Lovely options for both boys and girls. Sweet, friendly owner who genuinely cares about quality.",
+        "email": "miodoro.girne@bomnous.com",
+    },
 ]
 
+PRODUCTS_BY_CATEGORY = {
+    "women": [
+        ("Floral Midi Dress", "Light chiffon midi dress with a delicate floral print. Perfect for summer evenings.", 35.00, 20),
+        ("High-Waist Linen Trousers", "Breathable linen trousers in sand beige. Relaxed fit, elasticated waistband.", 28.00, 15),
+        ("Satin Wrap Blouse", "Elegant satin wrap-style blouse in deep burgundy. Pairs with trousers or a skirt.", 22.00, 18),
+        ("Leather Crossbody Bag", "Genuine leather crossbody bag with adjustable strap. Available in black and tan.", 55.00, 10),
+        ("Strappy Heeled Sandals", "Block-heel strappy sandals in nude. Comfortable for long evenings out.", 40.00, 12),
+    ],
+    "men": [
+        ("Slim Fit Suit — Navy", "Two-piece slim fit suit in navy blue. Ideal for formal events, graduations and weddings.", 120.00, 8),
+        ("Oxford Button-Down Shirt", "Classic white Oxford cotton shirt. Slim fit, double cuff. Works formal or casual.", 30.00, 25),
+        ("Slim Chino Trousers", "Stretch slim chino in stone. Smart-casual staple for lectures and meetings.", 35.00, 20),
+        ("Leather Belt — Brown", "Full-grain leather belt with a brushed silver buckle. Fits waist 28–42\".", 18.00, 30),
+        ("Snapback Cap — Black", "Structured snapback in all-black. Adjustable strap, one size fits all.", 15.00, 40),
+    ],
+    "baby": [
+        ("Organic Cotton Onesie Set (3-pack)", "Soft 100% organic cotton onesies in pastel tones. Sizes 0–18 months.", 22.00, 30),
+        ("Knitted Baby Cardigan", "Hand-finished knitted cardigan in cream. Button front, warm and gentle on skin.", 18.00, 20),
+        ("Baby Girl Tutu Dress", "Layered tulle tutu dress in soft pink. Perfect for first birthday photos.", 25.00, 15),
+        ("Baby Boy Denim Dungarees", "Soft stretch denim dungarees with snap buttons. Sizes 3–24 months.", 20.00, 18),
+        ("Muslin Swaddle Blankets (2-pack)", "100% cotton muslin swaddle blankets. Breathable, large size 120×120cm.", 16.00, 35),
+    ],
+}
 
-def _img_pair(i: int) -> tuple[str, str | None]:
-    a = _GOOD[(i - 1) % len(_GOOD)]
-    b = _GOOD[i % len(_GOOD)]
-    return a, b if a != b else b
+IMAGE_URLS = {
+    "women": [
+        "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=900&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1594938298603-c8148c4b4f7d?w=900&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1592669241067-2a12e768cb9f?w=900&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1548036328-c9fa89d128fa?w=900&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1543163521-1bf539c55dd2?w=900&auto=format&fit=crop",
+    ],
+    "men": [
+        "https://images.unsplash.com/photo-1593030761757-71fae45fa0e7?w=900&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=900&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1473966968600-fa801b869a1a?w=900&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1624378439575-d8705ad7ae80?w=900&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?w=900&auto=format&fit=crop",
+    ],
+    "baby": [
+        "https://images.unsplash.com/photo-1522771930-78848d9293e8?w=900&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1584839404765-34c0b3d5a9fa?w=900&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1515488042361-ee00e0ddd4e4?w=900&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1551044564-0bd98bcab7e7?w=900&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1519689680058-324335c77eba?w=900&auto=format&fit=crop",
+    ],
+}
 
 
-def seed(db: Session) -> None:
-    if db.query(Product).count() > 0:
-        print("Seed skipped: products table is not empty.")
+def username_from_email(email: str) -> str:
+    base = email.split("@")[0].lower()
+    base = re.sub(r"[^a-z0-9_]", "_", base)
+    return base[:48] or "seller"
+
+
+def shop_location(city: str, address: str) -> str:
+    return f"{city} — {address}"
+
+
+def shop_bio(instagram: str | None) -> str | None:
+    if not instagram:
+        return None
+    handle = instagram.replace("https://", "").replace("instagram.com/", "").strip("/")
+    return f"Instagram: @{handle}"
+
+
+def get_or_create_user(db: Session, shop_def: dict, pw_hash: str) -> User:
+    user = db.query(User).filter(User.email == shop_def["email"]).first()
+    if user:
+        user.role = "seller"
+        user.full_name = user.full_name or f"{shop_def['name']} Owner"
+        user.city = user.city or shop_def["city"]
+        user.phone = user.phone or shop_def["phone"]
+        if shop_def.get("instagram"):
+            user.bio = user.bio or shop_bio(shop_def["instagram"])
+        return user
+
+    username = username_from_email(shop_def["email"])
+    if db.query(User).filter(User.username == username).first():
+        username = f"{username}_{shop_def['city'][:3].lower()}"
+
+    user = User(
+        username=username,
+        email=shop_def["email"],
+        hashed_password=pw_hash,
+        role="seller",
+        full_name=f"{shop_def['name']} Owner",
+        phone=shop_def["phone"],
+        city=shop_def["city"],
+        bio=shop_bio(shop_def.get("instagram")),
+    )
+    db.add(user)
+    db.flush()
+    return user
+
+
+def get_or_create_shop(db: Session, shop_def: dict, owner: User) -> Shop:
+    shop = db.query(Shop).filter(Shop.owner_id == owner.id).first()
+    if shop:
+        shop.name = shop.name or shop_def["name"]
+        shop.location = shop.location or shop_location(shop_def["city"], shop_def["address"])
+        shop.description = shop.description or shop_def["description"]
+        shop.phone = shop.phone or shop_def["phone"]
+        shop.whatsapp = shop.whatsapp or shop_def["phone"]
+        shop.categories = shop.categories or json.dumps([shop_def["category"]])
+        return shop
+
+    shop = Shop(
+        name=shop_def["name"],
+        location=shop_location(shop_def["city"], shop_def["address"]),
+        description=shop_def["description"],
+        phone=shop_def["phone"],
+        whatsapp=shop_def["phone"],
+        categories=json.dumps([shop_def["category"]]),
+        owner_id=owner.id,
+    )
+    db.add(shop)
+    db.flush()
+    return shop
+
+
+def seed_products_for_shop(db: Session, shop: Shop, seller: User, cat: str, force: bool) -> int:
+    existing_names = {
+        p.name
+        for p in db.query(Product).filter(Product.shop_id == shop.id).all()
+    }
+    created = 0
+    images = IMAGE_URLS[cat]
+    aesthetic = AESTHETIC_BY_CATEGORY[cat]
+
+    for i, (p_name, p_desc, price, stock) in enumerate(PRODUCTS_BY_CATEGORY[cat]):
+        if p_name in existing_names and not force:
+            continue
+        img = images[i % len(images)]
+        hover = images[(i + 1) % len(images)]
+        product = Product(
+            name=p_name,
+            description=p_desc,
+            price=float(price),
+            stock=int(stock),
+            category=cat,
+            tag=TAGS[i % len(TAGS)],
+            aesthetic_tag=aesthetic,
+            image_url=img,
+            image_hover_url=hover if hover != img else None,
+            compare_at_price=round(float(price) * 1.12, 2),
+            shop_id=shop.id,
+            seller_id=seller.id,
+        )
+        db.add(product)
+        created += 1
+    return created
+
+
+def seed(db: Session, force: bool = False) -> None:
+    if db.query(Shop).filter(Shop.name == MARKER_SHOP).first() and not force:
+        print(f"Seed skipped: '{MARKER_SHOP}' already exists. Run with --force to fill missing sellers/shops/products.")
         return
 
-    pwd = hash_password("demo12345")
+    pw_hash = hash_password(SELLER_PASSWORD)
+    users_created = shops_created = products_created = 0
 
-    # (username, email) per shop owner — order matches shop index 0..3
-    owner_specs: list[tuple[str, str, str, str]] = [
-        ("zara_lefkos_seller", "zara.lefkosa@bomnous.test", "Zara Lefkoşa", "Lefkoşa"),
-        ("urban_thread_seller", "urban.thread@bomnous.test", "Urban Thread", "Gazimağusa"),
-        ("little_luxe_seller", "little.luxe@bomnous.test", "Little Luxe", "Girne"),
-        ("aso_ebi_seller", "asoebi.house@bomnous.test", "Aso-Ebi House", "Lefkoşa"),
-    ]
+    print("Starting Bomnous NC seed (17 shops, 85 products)...")
 
-    shops: list[Shop] = []
-    for username, email, shop_name, location in owner_specs:
-        user = User(username=username, email=email, hashed_password=pwd, role="seller")
-        db.add(user)
-        db.flush()
-        shop = Shop(name=shop_name, location=location, owner_id=user.id)
-        db.add(shop)
-        db.flush()
-        shops.append(shop)
+    for shop_def in SHOPS:
+        before_users = db.query(User).filter(User.email == shop_def["email"]).count()
+        user = get_or_create_user(db, shop_def, pw_hash)
+        if before_users == 0:
+            users_created += 1
 
-    shop_by_name = {s.name: s for s in shops}
+        before_shops = db.query(Shop).filter(Shop.owner_id == user.id).count()
+        shop = get_or_create_shop(db, shop_def, user)
+        if before_shops == 0:
+            shops_created += 1
 
-    # 30 products: name, price, stock, category, tag, aesthetic, shop_name, compare_at, description
-    TREND, DROP, PICKS = "trending", "just-dropped", "editors-picks"
-
-    rows: list[dict] = [
-        # Zara Lefkoşa — women's + accessories (8)
-        {
-            "name": "Camel Wool Wrap Skirt",
-            "price": 88.0,
-            "stock": 22,
-            "category": "women",
-            "tag": TREND,
-            "aesthetic": "soft-luxury",
-            "shop": "Zara Lefkoşa",
-            "compare": 105.0,
-            "description": "Buttery hand-feel in a clean midi length, cut to skim the hips and pool gently at the calf. Layer with knits for North Cyprus winter evenings or a silk cami when the light stays golden longer.",
-        },
-        {
-            "name": "Midnight Satin Bias Midi",
-            "price": 128.0,
-            "stock": 18,
-            "category": "women",
-            "tag": DROP,
-            "aesthetic": "event-ready",
-            "shop": "Zara Lefkoşa",
-            "compare": 158.0,
-            "description": "A fluid bias-cut slip that catches candlelight with every turn—perfect for gallery openings in old-town Lefkoşa or a reservations-only dinner. Adjustable straps, concealed side zip, lined bodice for confidence.",
-        },
-        {
-            "name": "Ivory Ribbed Knit Shell",
-            "price": 42.0,
-            "stock": 40,
-            "category": "women",
-            "tag": PICKS,
-            "aesthetic": "smart-casual",
-            "shop": "Zara Lefkoşa",
-            "compare": None,
-            "description": "Your everyday “quiet luxury” layer: dense rib, slightly cropped, reads polished under a blazer or alone with high-rise denim. Washes beautifully without losing its shape—made for repeat wears.",
-        },
-        {
-            "name": "Black Tweed Event Shift",
-            "price": 168.0,
-            "stock": 14,
-            "category": "women",
-            "tag": TREND,
-            "aesthetic": "event-ready",
-            "shop": "Zara Lefkoşa",
-            "compare": 199.0,
-            "description": "Mini-length tweed with subtle metallic thread—structured but never stiff. Pair with sheer tights and a pointed heel, or break the formality with chunky loafers. Feels at home at cultural fundraisers and after-dark rooftops.",
-        },
-        {
-            "name": "18k Gold-Plated Hoop Trio",
-            "price": 38.0,
-            "stock": 60,
-            "category": "accessories",
-            "tag": TREND,
-            "aesthetic": "soft-luxury",
-            "shop": "Zara Lefkoşa",
-            "compare": 48.0,
-            "description": "Three graduated hoops for mix-and-match styling—hollow-core so they stay light on the ear. Warm gold tone that flatters a range of skin tones. Comes in a soft travel pouch, gift-ready.",
-        },
-        {
-            "name": "Cognac Structured Day Tote",
-            "price": 112.0,
-            "stock": 25,
-            "category": "accessories",
-            "tag": DROP,
-            "aesthetic": "smart-casual",
-            "shop": "Zara Lefkoşa",
-            "compare": 135.0,
-            "description": "A relaxed structured silhouette with a relaxed grab handle and optional shoulder strap. Fits a laptop, water bottle, and a light scarf. Pebbled finish hides everyday scuffs; interior slip pockets keep keys findable.",
-        },
-        {
-            "name": "Dusty Rose Italian Silk Scarf 90",
-            "price": 64.0,
-            "stock": 33,
-            "category": "accessories",
-            "tag": PICKS,
-            "aesthetic": "soft-luxury",
-            "shop": "Zara Lefkoşa",
-            "compare": None,
-            "description": "A generous square in washed rose—drape it at the neck, thread through bag handles, or wear as a soft headwrap on breezy Girne promenades. The print is an abstract terrazzo, subtle enough to pair with workwear or linen.",
-        },
-        {
-            "name": "Tortoiseshell Oversize Sunglasses",
-            "price": 52.0,
-            "stock": 45,
-            "category": "accessories",
-            "tag": TREND,
-            "aesthetic": "event-ready",
-            "shop": "Zara Lefkoşa",
-            "compare": 68.0,
-            "description": "Oversize acetate with UV400 lenses and a flattering lifted browline. A modern classic that makes tired eyes look like a styling choice, not a schedule. Includes a slim hard case and cleaning cloth.",
-        },
-        {
-            "name": "Calf-Hair & Leather Reversible Belt",
-            "price": 46.0,
-            "stock": 30,
-            "category": "accessories",
-            "tag": DROP,
-            "aesthetic": "smart-casual",
-            "shop": "Zara Lefkoşa",
-            "compare": 58.0,
-            "description": "Reversible: smooth black leather one side, tonal calf-hair the other. Polished double-prong hardware. Cuts a clean line through suiting, denim, or a wrap dress—an instant outfit anchor.",
-        },
-        # Urban Thread — men's & street (7), Gazimağusa, no accessories
-        {
-            "name": "Heavyweight Fleece Street Hoodie",
-            "price": 72.0,
-            "stock": 50,
-            "category": "men",
-            "tag": TREND,
-            "aesthetic": "smart-casual",
-            "shop": "Urban Thread",
-            "compare": 89.0,
-            "description": "Densely knit fleece with a dropped shoulder and a generous hood. Built for coastal evenings in Gazimağusa—soft inside, clean outside. Ribbed hem and cuffs keep the silhouette intentional, not slouchy.",
-        },
-        {
-            "name": "Relaxed Tapered Cargo (Stone)",
-            "price": 98.0,
-            "stock": 35,
-            "category": "men",
-            "tag": DROP,
-            "aesthetic": "event-ready",
-            "shop": "Urban Thread",
-            "compare": None,
-            "description": "Tonal utility pockets sit flush for a city-ready line—pair with a crisp white tee and leather sneakers for a dinner that leans modern without trying too hard. Mid-weight cotton twill with a touch of stretch.",
-        },
-        {
-            "name": "Monochrome Archive Graphic Tee",
-            "price": 32.0,
-            "stock": 80,
-            "category": "men",
-            "tag": TREND,
-            "aesthetic": "soft-luxury",
-            "shop": "Urban Thread",
-            "compare": 42.0,
-            "description": "Soft ringspun cotton with a washed feel from day one. Tonal graphic, slightly oversized—tucks neatly or billows out over cargos. The kind of tee you reach for on repeat, wash after wash.",
-        },
-        {
-            "name": "Technical Black City Parka",
-            "price": 198.0,
-            "stock": 20,
-            "category": "men",
-            "tag": PICKS,
-            "aesthetic": "event-ready",
-            "shop": "Urban Thread",
-            "compare": 245.0,
-            "description": "Streamlined parka with water-repellent shell, hidden placket, and a collar that stands when you need presence. Lined, not puffy—sharp enough to wear over a blazer, relaxed enough for weekend promenades.",
-        },
-        {
-            "name": "Vintage Wash Selvedge Jeans",
-            "price": 108.0,
-            "stock": 28,
-            "category": "men",
-            "tag": TREND,
-            "aesthetic": "smart-casual",
-            "shop": "Urban Thread",
-            "compare": None,
-            "description": "A straight-leaning cut with a gentle fade hand-finished in small batch. Sits at the true waist, breaks clean over a low-top sneaker. Durable enough for real life, soft enough for the first wear.",
-        },
-        {
-            "name": "Quarter-Zip Fleece Pullover (Bone)",
-            "price": 84.0,
-            "stock": 32,
-            "category": "men",
-            "tag": PICKS,
-            "aesthetic": "soft-luxury",
-            "shop": "Urban Thread",
-            "compare": 99.0,
-            "description": "Micro-fleece with a refined drape, warm without bulk. Collar zips to a stand that frames the face. Soft enough to live in after campus days or early ferry rides—an elevated basic that reads intentional.",
-        },
-        {
-            "name": "Perforated Leather Court Sneaker",
-            "price": 118.0,
-            "stock": 24,
-            "category": "men",
-            "tag": TREND,
-            "aesthetic": "event-ready",
-            "shop": "Urban Thread",
-            "compare": 145.0,
-            "description": "Minimal low-profile sole, supple leather, subtle perforation for breath. Dresses up with cropped trousers, dresses down with joggers. A versatile anchor for the man who lives between meetings and music nights.",
-        },
-        # Little Luxe — children (6), soft luxury, Girne, no accessories
-        {
-            "name": "Pima Cotton Henley & Short Set",
-            "price": 48.0,
-            "stock": 40,
-            "category": "children",
-            "tag": DROP,
-            "aesthetic": "smart-casual",
-            "shop": "Little Luxe",
-            "compare": 59.0,
-            "description": "Breathable pima in a two-piece set that feels as soft as sleepwear but looks day-ready. Pearl snaps, gentle stretch at the neck—parent-approved for beach-town mornings in Girne.",
-        },
-        {
-            "name": "Merino Ruffle Playsuit (Cloud)",
-            "price": 56.0,
-            "stock": 28,
-            "category": "children",
-            "tag": TREND,
-            "aesthetic": "soft-luxury",
-            "shop": "Little Luxe",
-            "compare": 68.0,
-            "description": "A whisper of merino-blend knit, delicate ruffle at the shoulder, snaps for quick changes. Temperature-regulating in spring breezes, cozy in air-conditioned playrooms. Machine-wash on delicate; lay flat to dry.",
-        },
-        {
-            "name": "Tulle Garden Party Dress (Blush)",
-            "price": 64.0,
-            "stock": 22,
-            "category": "children",
-            "tag": TREND,
-            "aesthetic": "event-ready",
-            "shop": "Little Luxe",
-            "compare": 79.0,
-            "description": "Layered soft tulle with a cotton-linen lining so nothing itches. Perfect for name-day celebrations and family portraits—moves with twirls, photographs like a dream. Satin bow at the back is fully tacked for safety.",
-        },
-        {
-            "name": "Linen Sailor Knit Romper (Navy Stripe)",
-            "price": 44.0,
-            "stock": 35,
-            "category": "children",
-            "tag": PICKS,
-            "aesthetic": "smart-casual",
-            "shop": "Little Luxe",
-            "compare": None,
-            "description": "A coastal classic with shoulder buttons and leg snaps. Lightweight linen-cotton blend keeps small adventurers cool. Pair with a sun hat and tiny boat shoes for a yacht-day look without the fuss.",
-        },
-        {
-            "name": "Hooded Cashmere Cardigan (Oat)",
-            "price": 92.0,
-            "stock": 18,
-            "category": "children",
-            "tag": TREND,
-            "aesthetic": "soft-luxury",
-            "shop": "Little Luxe",
-            "compare": 110.0,
-            "description": "Featherlight cashmere blend, relaxed hood, wooden buttons. The layer you hand down because it only gets better. Gentle cycle or hand-wash; invest in a mesh bag to protect the knit for seasons to come.",
-        },
-        {
-            "name": "Velvet Smocked Party Dress (Forest)",
-            "price": 58.0,
-            "stock": 26,
-            "category": "children",
-            "tag": TREND,
-            "aesthetic": "event-ready",
-            "shop": "Little Luxe",
-            "compare": 72.0,
-            "description": "Deep green stretch velvet with a smocked bodice that flexes with growth. Tea-length, twirl-weight—ideal for recitals and Eid open houses. Fully lined, hidden zipper with a grosgrain pull a little hand can find.",
-        },
-        # Aso-Ebi House — West African & diaspora pieces (9), Lefkoşa, mostly cultural-blend
-        {
-            "name": "Royal Agbada Three-Piece Set (Indigo & Silver)",
-            "price": 225.0,
-            "stock": 10,
-            "category": "men",
-            "tag": TREND,
-            "aesthetic": "cultural-blend",
-            "shop": "Aso-Ebi House",
-            "compare": 250.0,
-            "description": "Statement embroidery on flowing cotton, tailored inner robe, and a generous outer layer that moves with purpose. Worn for weddings, naming days, and community homecomings—serves the North Cyprus African diaspora with respect and style.",
-        },
-        {
-            "name": "Emerald Aso-Ebi Five-Piece Lace & Wrap Set",
-            "price": 198.0,
-            "stock": 8,
-            "category": "women",
-            "tag": PICKS,
-            "aesthetic": "cultural-blend",
-            "shop": "Aso-Ebi House",
-            "compare": 235.0,
-            "description": "Lace in layers, designed for the guest who leads the aso-ebi line. Cool greens flatter a range of undertones; the wrap panel can be styled to taste. Dry clean before first wear to set the drape; steam gently.",
-        },
-        {
-            "name": "Amber Ankara Mermaid Gown (Custom Fit)",
-            "price": 165.0,
-            "stock": 12,
-            "category": "women",
-            "tag": TREND,
-            "aesthetic": "cultural-blend",
-            "shop": "Aso-Ebi House",
-            "compare": None,
-            "description": "A vibrant wax-print story in fitted bodice and flared mermaid—made for the dance floor at hall receptions. Pair with a gele from our headwrap range or a sleek up-do; alter locally for a precision hem.",
-        },
-        {
-            "name": "Charcoal Boubou Robe (Hand-Tacked Trim)",
-            "price": 142.0,
-            "stock": 11,
-            "category": "women",
-            "tag": DROP,
-            "aesthetic": "cultural-blend",
-            "shop": "Aso-Ebi House",
-            "compare": 175.0,
-            "description": "Floor-skimming flow with a subtle V and contrast trim picked by our atelier. Dress it up with heels or ground it with flat sandals. Cotton-rich blend breathes in warm Lefkoşa nights—elegant without ceremony-only stiffness.",
-        },
-        {
-            "name": "Gold-Print Short-Sleeve Dashiki",
-            "price": 68.0,
-            "stock": 20,
-            "category": "men",
-            "tag": DROP,
-            "aesthetic": "cultural-blend",
-            "shop": "Aso-Ebi House",
-            "compare": 85.0,
-            "description": "A relaxed celebration shirt with authentic geometry in metallic gold on deep ink. Pairs with slim trousers for parties or linen shorts for a harbor-side iftar gathering. Generous cut; size down for a neater line.",
-        },
-        {
-            "name": "Sunset Gele (Pre-Pleated Ready Tie)",
-            "price": 35.0,
-            "stock": 45,
-            "category": "accessories",
-            "tag": PICKS,
-            "aesthetic": "cultural-blend",
-            "shop": "Aso-Ebi House",
-            "compare": 44.0,
-            "description": "A structured, photo-ready headwrap in ombré sunset—pre-pleated for faster styling while still looking couture. Comes with a video QR for drape options. A celebration staple for the diaspora bride squad on both sides of the line.",
-        },
-        {
-            "name": "Coral Glass Bead Layered Statement Necklace",
-            "price": 45.0,
-            "stock": 38,
-            "category": "accessories",
-            "tag": TREND,
-            "aesthetic": "soft-luxury",
-            "shop": "Aso-Ebi House",
-            "compare": 58.0,
-            "description": "Hand-strung graduated beads with a gold-tone clasp. Layer over necklines of lace, boubou, or a simple white tee to bridge heritage and high street. Lightweight enough for all-night wear, bold enough to carry the look.",
-        },
-        {
-            "name": "Glass Waist-Bead Strand (Adjustable Tie)",
-            "price": 18.0,
-            "stock": 70,
-            "category": "accessories",
-            "tag": DROP,
-            "aesthetic": "cultural-blend",
-            "shop": "Aso-Ebi House",
-            "compare": 24.0,
-            "description": "Color-rich seed beads on cotton cord—tie to fit, mix with other strands, gift to a new mum or a new chapter. A quiet nod to tradition that sits as comfortably under a gown as over swim at a private beach club.",
-        },
-        {
-            "name": "Ankara Tote with Leather Handles (Lagos Teal)",
-            "price": 55.0,
-            "stock": 30,
-            "category": "accessories",
-            "tag": TREND,
-            "aesthetic": "cultural-blend",
-            "shop": "Aso-Ebi House",
-            "compare": 69.0,
-            "description": "A structured rectangular tote in bold teal wax print, lined in cotton, with bridle-inspired leather handles. Folds flat for a suitcase, opens wide for a weekend market. Celebrates the pattern—wear it like a flex, carry it with pride.",
-        },
-        {
-            "name": "Aso-Éyì Choker (Ivory & Gold Beads)",
-            "price": 15.0,
-            "stock": 55,
-            "category": "accessories",
-            "tag": PICKS,
-            "aesthetic": "cultural-blend",
-            "shop": "Aso-Ebi House",
-            "compare": 22.0,
-            "description": "A delicate collar of ivory seeds and faceted gold-tone accents—sits at the true neckline for iro & buba, slip dresses, or a crisp shirt. A finishing touch for registry portraits and the warm receiving line that follows.",
-        },
-    ]
-
-    n_products = len(rows)
-    for idx, spec in enumerate(rows, start=1):
-        shop = shop_by_name[spec["shop"]]
-        img, hover = _img_pair(idx)
-        p = Product(
-            name=spec["name"],
-            description=spec.get("description"),
-            price=spec["price"],
-            stock=spec["stock"],
-            category=spec["category"],
-            tag=spec["tag"],
-            aesthetic_tag=spec["aesthetic"],
-            image_url=img,
-            image_hover_url=hover,
-            compare_at_price=spec.get("compare"),
-            shop_id=shop.id,
-            seller_id=shop.owner_id,
-        )
-        db.add(p)
+        n = seed_products_for_shop(db, shop, user, shop_def["category"], force)
+        products_created += n
 
     db.commit()
-    print(
-        f"Seeded {n_products} products across 4 shops "
-        "(Zara Lefkoşa, Urban Thread, Little Luxe, Aso-Ebi House)."
-    )
+
+    total_users = db.query(User).filter(User.role == "seller").count()
+    total_shops = db.query(Shop).count()
+    total_products = db.query(Product).count()
+
+    print("\nSeed complete!")
+    print(f"  New sellers this run : {users_created}")
+    print(f"  New shops this run   : {shops_created}")
+    print(f"  New products this run: {products_created}")
+    print(f"  Total sellers in DB  : {total_users}")
+    print(f"  Total shops in DB    : {total_shops}")
+    print(f"  Total products in DB : {total_products}")
+    print(f"\n  Seller password for all seeded accounts: {SELLER_PASSWORD}")
+    print("\n  Shops by city:")
+    cities: dict[str, list[str]] = {}
+    for s in SHOPS:
+        cities.setdefault(s["city"], []).append(s["name"])
+    for city, names in sorted(cities.items()):
+        print(f"    {city}: {', '.join(names)}")
 
 
 def main() -> None:
-    os.chdir(ROOT)
+    parser = argparse.ArgumentParser(description="Seed Bomnous North Cyprus shops")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Do not skip when Garderobe exists; add any missing users/shops/products",
+    )
+    args = parser.parse_args()
+
     db = SessionLocal()
     try:
-        seed(db)
+        seed(db, force=args.force)
     except Exception:
         db.rollback()
         raise

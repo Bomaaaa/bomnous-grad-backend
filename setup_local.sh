@@ -23,8 +23,8 @@ pip install -r requirements.txt
 echo "==> [1] Alembic migrations"
 alembic upgrade head
 
-echo "==> [2] Seed products (skips if products table is not empty)"
-python seed_bomnous.py
+echo "==> [2] Seed NC shops (skips if Garderobe shop already exists; use --force to add missing)"
+python seed_bomnous.py "$@"
 
 echo ""
 echo "==> [3] API: default http://127.0.0.1:8000"
