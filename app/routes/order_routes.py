@@ -1,7 +1,4 @@
-import os
-
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 from app.db import get_db
 from app.utils.security import get_current_user
@@ -12,7 +9,6 @@ import app.crud as crud
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 api_router = APIRouter(prefix="/api/orders", tags=["Orders"])
-seller_api_router = APIRouter(prefix="/api/seller", tags=["Seller"])
 
 
 def _serialize_order(db: Session, order: Order) -> dict:
@@ -71,6 +67,23 @@ def api_list_orders(
     return _list_my_orders(db, current_user)
 
 
+@api_router.get("/{order_id}")
+def api_get_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    order = (
+        db.query(Order)
+        .options(joinedload(Order.items))
+        .filter(Order.id == order_id, Order.user_id == current_user.id)
+        .first()
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return _serialize_order(db, order)
+
+
 @router.post("/")
 def create_order(
     db: Session = Depends(get_db),
@@ -106,7 +119,7 @@ def _cancel_order(db: Session, order_id: int, current_user: User) -> dict:
     status = (order.status or "pending").lower()
     if status == "cancelled":
         return _serialize_order(db, order)
-    if status not in ("pending", "processing"):
+    if status not in ("pending", "processing", "confirmed"):
         raise HTTPException(
             status_code=400,
             detail=f"Cannot cancel order with status '{order.status}'",
@@ -195,119 +208,14 @@ def get_receipt(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    # 1️⃣ Fetch the order
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+
+    # 2️⃣ Ensure the current user owns the order
     if order.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="You are not allowed to view this receipt")
+
+    # 3️⃣ Return receipt
     return crud.get_order_details(db, order_id)
-
-
-# ---------------------------------------------------------------------------
-# Seller orders — GET /api/seller/orders  and  GET /api/orders/seller
-# ---------------------------------------------------------------------------
-
-def _get_seller_orders(db: Session, current_user: User) -> list[dict]:
-    if current_user.role != "seller":
-        raise HTTPException(status_code=403, detail="Only sellers can view seller orders")
-    shop = db.query(Shop).filter(Shop.owner_id == current_user.id).first()
-    if not shop:
-        return []
-    product_ids = [p.id for p in db.query(Product.id).filter(Product.shop_id == shop.id).all()]
-    if not product_ids:
-        return []
-    order_ids = (
-        db.query(OrderItem.order_id)
-        .filter(OrderItem.product_id.in_(product_ids))
-        .distinct()
-        .all()
-    )
-    if not order_ids:
-        return []
-    orders = (
-        db.query(Order)
-        .options(joinedload(Order.items))
-        .filter(Order.id.in_([r.order_id for r in order_ids]))
-        .order_by(Order.id.desc())
-        .all()
-    )
-    return [_serialize_order(db, o) for o in orders]
-
-
-@seller_api_router.get("/orders")
-def get_seller_orders_v1(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    return _get_seller_orders(db, current_user)
-
-
-@api_router.get("/seller")
-def get_seller_orders_v2(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    return _get_seller_orders(db, current_user)
-
-
-# ---------------------------------------------------------------------------
-# Notify-ready — POST /api/orders/{order_id}/notify-ready
-# ---------------------------------------------------------------------------
-
-class NotifyReadyBody(BaseModel):
-    pickup_from: str
-    pickup_to: str
-
-
-def _send_resend_email(to: str, subject: str, html: str) -> None:
-    api_key = os.getenv("RESEND_API_KEY")
-    from_email = os.getenv("FROM_EMAIL", "noreply@bomnous.com")
-    if not api_key:
-        return
-    try:
-        import resend  # type: ignore
-        resend.api_key = api_key
-        resend.Emails.send({"from": from_email, "to": [to], "subject": subject, "html": html})
-    except Exception:
-        pass  # email is best-effort; don't block the response
-
-
-def _notify_ready(order_id: int, body: NotifyReadyBody, db: Session, current_user: User) -> dict:
-    if current_user.role != "seller":
-        raise HTTPException(status_code=403, detail="Only sellers can mark orders as ready")
-    order = db.query(Order).options(joinedload(Order.items)).filter(Order.id == order_id).first()
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-
-    shop = db.query(Shop).filter(Shop.owner_id == current_user.id).first()
-    if shop:
-        shop_product_ids = {p.id for p in db.query(Product.id).filter(Product.shop_id == shop.id).all()}
-        order_product_ids = {item.product_id for item in order.items}
-        if not shop_product_ids.intersection(order_product_ids):
-            raise HTTPException(status_code=403, detail="This order contains no products from your shop")
-
-    order.status = "ready"
-    db.commit()
-    db.refresh(order)
-
-    buyer = db.query(User).filter(User.id == order.user_id).first()
-    if buyer and buyer.email:
-        html = (
-            f"<p>Hi {buyer.username or 'there'},</p>"
-            f"<p>Your Bomnous order <strong>#{order.id}</strong> is ready for pickup!</p>"
-            f"<p><strong>Pickup window:</strong> {body.pickup_from} – {body.pickup_to}</p>"
-            f"<p>Thank you for shopping on Bomnous.</p>"
-        )
-        _send_resend_email(buyer.email, f"Your Bomnous order #{order.id} is ready!", html)
-
-    return {"message": "Order marked as ready", "order_id": order.id, "status": "ready"}
-
-
-@api_router.post("/{order_id}/notify-ready")
-def notify_order_ready(
-    order_id: int,
-    body: NotifyReadyBody,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    return _notify_ready(order_id, body, db, current_user)

@@ -244,27 +244,28 @@ PRODUCTS_BY_CATEGORY = {
     ],
 }
 
+# Per-product Unsplash URLs (same mapping as refresh_nc_images.py)
 IMAGE_URLS = {
     "women": [
-        "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=900&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1594938298603-c8148c4b4f7d?w=900&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1592669241067-2a12e768cb9f?w=900&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1548036328-c9fa89d128fa?w=900&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1543163521-1bf539c55dd2?w=900&auto=format&fit=crop",
+        ("Floral Midi Dress", "https://images.unsplash.com/photo-1595777457583-95e059a59a09?w=900&auto=format&fit=crop&q=80"),
+        ("High-Waist Linen Trousers", "https://images.unsplash.com/photo-1594633312681-425c7b97ccd1?w=900&auto=format&fit=crop&q=80"),
+        ("Satin Wrap Blouse", "https://images.unsplash.com/photo-1564257631407-3deb25e9c8e0?w=900&auto=format&fit=crop&q=80"),
+        ("Leather Crossbody Bag", "https://images.unsplash.com/photo-1548036328-c9fa89d128fa?w=900&auto=format&fit=crop&q=80"),
+        ("Strappy Heeled Sandals", "https://images.unsplash.com/photo-1543163521-1bf539c55dd2?w=900&auto=format&fit=crop&q=80"),
     ],
     "men": [
-        "https://images.unsplash.com/photo-1593030761757-71fae45fa0e7?w=900&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=900&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1473966968600-fa801b869a1a?w=900&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1624378439575-d8705ad7ae80?w=900&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?w=900&auto=format&fit=crop",
+        ("Slim Fit Suit — Navy", "https://images.unsplash.com/photo-1594938298603-c8148c4b4f7d?w=900&auto=format&fit=crop&q=80"),
+        ("Oxford Button-Down Shirt", "https://images.unsplash.com/photo-1602810318383-e386cc2a3f06?w=900&auto=format&fit=crop&q=80"),
+        ("Slim Chino Trousers", "https://images.unsplash.com/photo-1473966968600-fa801b869a1a?w=900&auto=format&fit=crop&q=80"),
+        ("Leather Belt — Brown", "https://images.unsplash.com/photo-1624222247344-550fb60583c9?w=900&auto=format&fit=crop&q=80"),
+        ("Snapback Cap — Black", "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?w=900&auto=format&fit=crop&q=80"),
     ],
     "baby": [
-        "https://images.unsplash.com/photo-1522771930-78848d9293e8?w=900&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1584839404765-34c0b3d5a9fa?w=900&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1515488042361-ee00e0ddd4e4?w=900&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1551044564-0bd98bcab7e7?w=900&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1519689680058-324335c77eba?w=900&auto=format&fit=crop",
+        ("Organic Cotton Onesie Set (3-pack)", "https://images.unsplash.com/photo-1515488042361-ee00e0ddd4e4?w=900&auto=format&fit=crop&q=80"),
+        ("Knitted Baby Cardigan", "https://images.unsplash.com/photo-1519689680058-324335c77eba?w=900&auto=format&fit=crop&q=80"),
+        ("Baby Girl Tutu Dress", "https://images.unsplash.com/photo-1551044564-0bd98bcab7e7?w=900&auto=format&fit=crop&q=80"),
+        ("Baby Boy Denim Dungarees", "https://images.unsplash.com/photo-1519238263530-4422f829fb64?w=900&auto=format&fit=crop&q=80"),
+        ("Muslin Swaddle Blankets (2-pack)", "https://images.unsplash.com/photo-1586105251261-72a75633a4e5?w=900&auto=format&fit=crop&q=80"),
     ],
 }
 
@@ -347,14 +348,16 @@ def seed_products_for_shop(db: Session, shop: Shop, seller: User, cat: str, forc
         for p in db.query(Product).filter(Product.shop_id == shop.id).all()
     }
     created = 0
-    images = IMAGE_URLS[cat]
+    image_by_name = {name: url for name, url in IMAGE_URLS[cat]}
     aesthetic = AESTHETIC_BY_CATEGORY[cat]
 
     for i, (p_name, p_desc, price, stock) in enumerate(PRODUCTS_BY_CATEGORY[cat]):
         if p_name in existing_names and not force:
             continue
-        img = images[i % len(images)]
-        hover = images[(i + 1) % len(images)]
+        img = image_by_name.get(p_name) or IMAGE_URLS[cat][i % len(IMAGE_URLS[cat])][1]
+        names = [n for n, _ in IMAGE_URLS[cat]]
+        next_name = names[(i + 1) % len(names)]
+        hover = image_by_name.get(next_name)
         product = Product(
             name=p_name,
             description=p_desc,
