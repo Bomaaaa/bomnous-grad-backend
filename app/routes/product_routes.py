@@ -4,6 +4,7 @@ from app.db import SessionLocal, get_db
 from app.models import Product, Shop, User
 from app.schemas.product import ProductCreate, ProductResponse, ProductUpdate
 from app.product_search import search_products_public
+from app.product_serialize import product_to_response
 from app.utils.security import get_current_user
 
 
@@ -44,17 +45,15 @@ def create_product(product: ProductCreate, db: Session = Depends(get_db),  curre
 @router.get("/", response_model=list[ProductResponse])
 def get_products(db: Session = Depends(get_db)):
     rows = (
-        db.query(Product, Shop.name.label("shop_name"))
+        db.query(Product, Shop.name.label("shop_name"), Shop.owner_id.label("owner_id"))
         .join(Shop, Product.shop_id == Shop.id)
         .order_by(Product.id)
         .all()
     )
-    out = []
-    for p, shop_name in rows:
-        data = ProductResponse.model_validate(p).model_dump()
-        data["shop_name"] = shop_name
-        out.append(data)
-    return out
+    return [
+        product_to_response(p, shop_name=shop_name, shop_owner_id=owner_id)
+        for p, shop_name, owner_id in rows
+    ]
 
 
 @router.get("/search", response_model=list[ProductResponse])
@@ -95,18 +94,32 @@ def get_my_products(
             detail="Only sellers can view their products"
         )
 
-    products = db.query(Product).filter(Product.seller_id == current_user.id).all()
-
-    return products
+    rows = (
+        db.query(Product, Shop.name.label("shop_name"), Shop.owner_id.label("owner_id"))
+        .join(Shop, Product.shop_id == Shop.id)
+        .filter(Product.seller_id == current_user.id)
+        .order_by(Product.id.desc())
+        .all()
+    )
+    return [
+        product_to_response(p, shop_name=shop_name, shop_owner_id=owner_id)
+        for p, shop_name, owner_id in rows
+    ]
 
 
 # GET PRODUCT BY ID
 @router.get("/{product_id}", response_model=ProductResponse)
 def get_product(product_id: int, db: Session = Depends(get_db)):
-    product = db.query(Product).filter(Product.id == product_id).first()
-    if not product:
+    row = (
+        db.query(Product, Shop.name.label("shop_name"), Shop.owner_id.label("owner_id"))
+        .join(Shop, Product.shop_id == Shop.id)
+        .filter(Product.id == product_id)
+        .first()
+    )
+    if not row:
         raise HTTPException(status_code=404, detail="Product not found")
-    return product
+    product, shop_name, owner_id = row
+    return product_to_response(product, shop_name=shop_name, shop_owner_id=owner_id)
 
 
 # UPDATE PRODUCT

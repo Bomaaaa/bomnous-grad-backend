@@ -96,8 +96,8 @@ def checkout_cart(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role != "buyer":
-        raise HTTPException(status_code=403, detail="Only buyers can create orders")
+    if current_user.role not in ("buyer", "seller"):
+        raise HTTPException(status_code=403, detail="Sign in as a buyer or seller to checkout")
 
     cart_rows = db.query(CartItem).filter(CartItem.user_id == current_user.id).all()
     if not cart_rows:

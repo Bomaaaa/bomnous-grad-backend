@@ -72,11 +72,10 @@ def create_order(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    #  Only buyers can create orders
-    if current_user.role != "buyer":
+    if current_user.role not in ("buyer", "seller"):
         raise HTTPException(
             status_code=403,
-            detail="Only buyers can create orders"
+            detail="Sign in as a buyer or seller to place orders",
         )
 
     order = crud.create_order(db, current_user.id)
@@ -88,8 +87,8 @@ def api_create_order(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role != "buyer":
-        raise HTTPException(status_code=403, detail="Only buyers can create orders")
+    if current_user.role not in ("buyer", "seller"):
+        raise HTTPException(status_code=403, detail="Sign in as a buyer or seller to place orders")
     order = crud.create_order(db, current_user.id)
     return _serialize_order(db, order)
 

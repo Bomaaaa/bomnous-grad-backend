@@ -66,6 +66,15 @@ def get_new_shops(db: Session = Depends(get_db)):
         _decode_categories(s)
     return shops
 
+@router.get("/seller/{seller_id}", response_model=ShopResponse)
+def get_shop_by_seller(seller_id: int, db: Session = Depends(get_db)):
+    shop = db.query(Shop).filter(Shop.owner_id == seller_id).first()
+    if not shop:
+        raise HTTPException(status_code=404, detail="Shop not found for this seller")
+    _decode_categories(shop)
+    return shop
+
+
 @router.get("/my", response_model=ShopResponse)
 def get_my_shop(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if current_user.role != "seller":
@@ -90,10 +99,18 @@ def get_shop(shop_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{shop_id}/products", response_model=list[ProductResponse])
 def get_shop_products(shop_id: int, db: Session = Depends(get_db)):
+    from app.product_serialize import product_to_response
+
     shop = db.query(Shop).filter(Shop.id == shop_id).first()
     if not shop:
         raise HTTPException(status_code=404, detail="Shop not found")
-    return db.query(Product).filter(Product.shop_id == shop_id).order_by(Product.id).all()
+    products = (
+        db.query(Product).filter(Product.shop_id == shop_id).order_by(Product.id).all()
+    )
+    return [
+        product_to_response(p, shop_name=shop.name, shop_owner_id=shop.owner_id)
+        for p in products
+    ]
 
 
 # UPDATE SHOP

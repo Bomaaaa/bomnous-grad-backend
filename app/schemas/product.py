@@ -39,6 +39,7 @@ class ProductUpdate(BaseModel):
 # For returning product data
 class ProductResponse(ProductBase):
     id: int
+    seller_id: int | None = None
     # Derived field (joined from Shop) for read responses only.
     shop_name: str | None = None
 

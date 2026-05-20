@@ -8,7 +8,7 @@ from sqlalchemy import and_, case, desc, func, literal, or_
 from sqlalchemy.orm import Session
 
 from app.models import Product, Shop
-from app.schemas.product import ProductResponse
+from app.product_serialize import product_to_response
 
 ALLOWED_AESTHETIC_TAGS = frozenset(
     {"soft-luxury", "event-ready", "smart-casual", "cultural-blend"}
@@ -201,7 +201,9 @@ def search_products_public(
       on name, description, and tag (ILIKE, escaped wildcards, stem variants).
     - With `q`: results ordered by relevance score (see `_relevance_for_variant`).
     """
-    query = db.query(Product, Shop.name.label("shop_name")).join(Shop, Product.shop_id == Shop.id)
+    query = db.query(
+        Product, Shop.name.label("shop_name"), Shop.owner_id.label("owner_id")
+    ).join(Shop, Product.shop_id == Shop.id)
 
     q_stripped = (q or "").strip()
     has_text = bool(q_stripped)
@@ -254,8 +256,6 @@ def search_products_public(
     cap = max(1, min(int(limit), 500))
     rows = query.limit(cap).all()
     out: list[dict[str, Any]] = []
-    for p, shop_name in rows:
-        data = ProductResponse.model_validate(p).model_dump()
-        data["shop_name"] = shop_name
-        out.append(data)
+    for p, shop_name, owner_id in rows:
+        out.append(product_to_response(p, shop_name=shop_name, shop_owner_id=owner_id))
     return out

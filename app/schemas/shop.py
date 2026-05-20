@@ -23,7 +23,7 @@ class ShopUpdate(BaseModel):
 
 class ShopResponse(ShopBase):
     id: int
-  
+    owner_id: int | None = None
 
     class Config:
         from_attributes = True
