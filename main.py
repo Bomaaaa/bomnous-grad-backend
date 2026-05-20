@@ -42,10 +42,12 @@ def home():
 
 
 app.include_router(shop_routes.router)
+app.include_router(shop_routes.api_router)
 app.include_router(aesthetic_routes.router)
 app.include_router(product_routes.router)
 app.include_router(order_routes.router)
 app.include_router(order_routes.api_router)
+app.include_router(order_routes.seller_api_router)
 app.include_router(cart_routes.router)
 app.include_router(wishlist_routes.router)
 app.include_router(user_routes.router)

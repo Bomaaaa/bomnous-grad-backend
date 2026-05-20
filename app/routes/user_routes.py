@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db import get_db
-from app.models import User
+from app.models import ShopFollow, User
 from app.schemas.user import UserCreate, UserResponse, UserUpdate, ProfileUpdate
 from app.utils.security import hash_password, get_current_user
 
@@ -18,6 +18,15 @@ def get_my_profile(current_user: User = Depends(get_current_user)):
 @api_router.get("/me", response_model=UserResponse)
 def get_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@api_router.get("/me/following")
+def get_my_following(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    rows = db.query(ShopFollow.seller_id).filter(ShopFollow.user_id == current_user.id).all()
+    return [r.seller_id for r in rows]
 
 
 @router.put("/profile", response_model=UserResponse)

@@ -4,12 +4,13 @@ import json
 from app.db import SessionLocal, get_db
 from app.schemas.product import ProductResponse
 from app.schemas.shop import ShopCreate, ShopResponse, ShopUpdate
-from app.models import Product, Shop, User
+from app.models import Product, Shop, ShopFollow, User
 from app.utils.security import get_current_user
 
 
 
 router = APIRouter(prefix="/shops", tags=["Shops"])
+api_router = APIRouter(prefix="/api/shops", tags=["Shops"])
 
 def _decode_categories(shop: Shop) -> None:
     if not getattr(shop, "categories", None):
@@ -173,3 +174,61 @@ def delete_shop(shop_id: int, db: Session = Depends(get_db), current_user: User 
     db.commit()
 
     return {"message": "Shop deleted successfully"}
+
+
+# ---------------------------------------------------------------------------
+# Follow endpoints — mounted at /api/shops/{seller_id}/follow|followers
+# ---------------------------------------------------------------------------
+
+def _do_follow(seller_id: int, db: Session, current_user: User) -> dict:
+    if current_user.id == seller_id:
+        raise HTTPException(status_code=400, detail="You cannot follow yourself")
+    existing = (
+        db.query(ShopFollow)
+        .filter(ShopFollow.user_id == current_user.id, ShopFollow.seller_id == seller_id)
+        .first()
+    )
+    if not existing:
+        db.add(ShopFollow(user_id=current_user.id, seller_id=seller_id))
+        db.commit()
+    return {"followed": True}
+
+
+def _do_unfollow(seller_id: int, db: Session, current_user: User) -> dict:
+    existing = (
+        db.query(ShopFollow)
+        .filter(ShopFollow.user_id == current_user.id, ShopFollow.seller_id == seller_id)
+        .first()
+    )
+    if existing:
+        db.delete(existing)
+        db.commit()
+    return {"followed": False}
+
+
+def _do_follower_count(seller_id: int, db: Session) -> dict:
+    count = db.query(ShopFollow).filter(ShopFollow.seller_id == seller_id).count()
+    return {"count": count}
+
+
+@api_router.post("/{seller_id}/follow")
+def follow_shop(
+    seller_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _do_follow(seller_id, db, current_user)
+
+
+@api_router.delete("/{seller_id}/follow")
+def unfollow_shop(
+    seller_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _do_unfollow(seller_id, db, current_user)
+
+
+@api_router.get("/{seller_id}/followers")
+def get_follower_count(seller_id: int, db: Session = Depends(get_db)):
+    return _do_follower_count(seller_id, db)
